@@ -205,6 +205,11 @@ local function SetupRunner()
 	myPlatform.CFrame = CFrame.new(root.Position + Vector3.new(0,60,0))
 	myPlatform.Parent = Workspace
 
+	-- TELEPORT SOPRA LA PIATTAFORMA
+	task.wait(0.1)
+	root.CFrame = myPlatform.CFrame + Vector3.new(0,3,0)
+	root.AssemblyLinearVelocity = Vector3.zero
+
 	local hum = player.Character:FindFirstChild("Humanoid")
 	if hum then hum.PlatformStand = true end
 
