@@ -15,8 +15,7 @@ local isScriptActive = false
 local currentMode = "None"
 local hasEscaped = false
 local myPlatform = nil
-local holdBodyPos = nil
-local holdGyro = nil
+local platformHeight = 60 -- sopra la mappa
 local bonusConnection = nil
 
 local gameClock = nil
@@ -91,13 +90,8 @@ stroke.Parent = hideBtn
 local uiVisible = true
 hideBtn.MouseButton1Click:Connect(function()
 	uiVisible = not uiVisible
-	if uiVisible then
-		mainFrame.Visible = true
-		hideBtn.Text = "Hide UI"
-	else
-		mainFrame.Visible = false
-		hideBtn.Text = "Show UI"
-	end
+	mainFrame.Visible = uiVisible
+	hideBtn.Text = uiVisible and "Hide UI" or "Show UI"
 end)
 
 -- Anti-AFK
@@ -110,11 +104,8 @@ end)
 
 -- Utilities
 local function CleanUpPhysics()
-	if holdBodyPos then holdBodyPos:Destroy() holdBodyPos = nil end
-	if holdGyro then holdGyro:Destroy() holdGyro = nil end
 	if myPlatform then myPlatform:Destroy() myPlatform = nil end
 	if bonusConnection then bonusConnection:Disconnect() bonusConnection = nil end
-
 	if player.Character then
 		local hum = player.Character:FindFirstChild("Humanoid")
 		if hum then hum.PlatformStand = false end
@@ -147,7 +138,7 @@ local function SpamTeleport(targetCFrame, duration)
 	end
 end
 
--- Bonus (Lobby)
+-- Bonus
 local function CollectBonus()
 	if currentMode ~= "Lobby" or not isScriptActive then return end
 	local barrel = Workspace:FindFirstChild("BonusBarrel")
@@ -200,8 +191,8 @@ local function OnTeamChanged()
 				task.wait(0.1)
 			until root
 
-			-- Create platform slightly below root
-			local platformPos = root.Position - Vector3.new(0, 3, 0)
+			-- Create flying platform above the map
+			local platformPos = root.Position + Vector3.new(0, platformHeight, 0)
 			myPlatform = Instance.new("Part")
 			myPlatform.Size = Vector3.new(50, 1, 50)
 			myPlatform.Anchored = true
@@ -215,7 +206,7 @@ local function OnTeamChanged()
 			local hum = player.Character:FindFirstChild("Humanoid")
 			if hum then hum.PlatformStand = true end
 
-			-- Magnet loop
+			-- Magnet loop with offset above platform
 			RunService.Heartbeat:Connect(function()
 				if not isScriptActive or currentMode ~= "Runner" then return end
 				local charRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -223,7 +214,7 @@ local function OnTeamChanged()
 
 				for _, obj in pairs(Workspace:GetDescendants()) do
 					if obj.Name == MONEY_NAME then
-						local targetPos = charRoot.Position - Vector3.new(0, 2, 0)
+						local targetPos = charRoot.Position + Vector3.new(0, 3, 5) -- leggermente davanti e sopra
 						if obj:IsA("BasePart") then
 							obj.CanCollide = false
 							obj.CFrame = CFrame.new(targetPos)
@@ -264,7 +255,7 @@ RunService.Stepped:Connect(function()
 	-- Escape
 	if currentMode == "Runner" and gameClock and gameClock.Value <= 60 and gameClock.Value > 50 and not hasEscaped then
 		hasEscaped = true
-		CleanUpPhysics()
+		CleanUpPhysics() -- rimuove piattaforma
 
 		if exitsFolder then
 			local exits = exitsFolder:GetChildren()
