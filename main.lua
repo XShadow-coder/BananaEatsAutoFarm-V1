@@ -233,57 +233,64 @@ local function SetupRunner()
     UpdateStatus()
 end
 
+local retryingEscape = false -- variabile di lock
+
 -- Escape loop
 RunService.Heartbeat:Connect(function()
-    if not isScriptActive then return end
-    if currentMode ~= "Runner" then return end
-    if not roundStarted then return end
-    if hasEscaped then return end
+	if not isScriptActive then return end
+	if currentMode ~= "Runner" then return end
+	if not roundStarted then return end
+	if hasEscaped then return end
+	if retryingEscape then return end
 
-    if not gameClock then
-        local gp = Workspace:FindFirstChild("GameProperties")
-        if gp then gameClock = gp:FindFirstChild("GameClock") end
-    end
+	if not gameClock then
+		local gp = Workspace:FindFirstChild("GameProperties")
+		if gp then gameClock = gp:FindFirstChild("GameClock") end
+	end
 
-    if not gameClock then return end
+	if not gameClock then return end
 
-    if gameClock.Value <= 60 then
-        UpdateStatus()
-        local char = player.Character
-        if not char then return end
+	if gameClock.Value <= 60 then
+		UpdateStatus()
+		local char = player.Character
+		if not char then return end
 
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if not root then return end
 
-        local target = getClosestExit()
-        if not target then return end
+		local target = getClosestExit()
+		if not target then return end
 
-        for _, v in pairs(char:GetDescendants()) do
-            if v:IsA("BasePart") then
-                v.CanCollide = false
-            end
-        end
+		for _, v in pairs(char:GetDescendants()) do
+			if v:IsA("BasePart") then
+				v.CanCollide = false
+			end
+		end
 
-        -- try to escape
-        local start = tick()
-        while tick() - start < 4 do
-            root.CFrame = target.CFrame * CFrame.new(0,5,0)
-            root.AssemblyLinearVelocity = Vector3.zero
-            RunService.Heartbeat:Wait()
-        end
+		-- try to escape
+		local start = tick()
+		while tick() - start < 4 do
+			root.CFrame = target.CFrame * CFrame.new(0,5,0)
+			root.AssemblyLinearVelocity = Vector3.zero
+			RunService.Heartbeat:Wait()
+		end
 
-        -- Check if Escape failed
-        if (root.Position - target.Position).Magnitude > 10 then
-            print("Escape failed, recreating platform and retrying in 10 seconds...")
-            SetupRunner() -- start magnet and platform
-            task.delay(10, function()
-                hasEscaped = false -- reset escape to retry
-            end)
-        else
-            hasEscaped = true
-            UpdateStatus()
-        end
-    end
+		-- Check if Escape failed
+		if (root.Position - target.Position).Magnitude > 10 then
+			if not retryingEscape then
+				retryingEscape = true
+				print("Escape failed, recreating platform and retrying in 10 seconds...")
+				SetupRunner() -- start magnet and platform
+				task.delay(10, function()
+					hasEscaped = false -- reset escape to retry
+					retryingEscape = false
+				end)
+			end
+		else
+			hasEscaped = true
+			UpdateStatus()
+		end
+	end
 end)
 			end
     end
