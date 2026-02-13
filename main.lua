@@ -4,7 +4,7 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local VirtualUser = game:GetService("VirtualUser")
 
--- Player / Teams
+-- Player and Teams
 local player = Players.LocalPlayer
 local RUNNER_TEAM = "Runners"
 local BANANA_TEAM = "Banana"
@@ -14,17 +14,16 @@ local MONEY_NAME = "Token"
 local isScriptActive = false
 local currentMode = "None"
 local hasEscaped = false
+local roundStarted = false
 local myPlatform = nil
 local magnetConnection = nil
-local bonusConnection = nil
 local gameClock = nil
-local exitsFolder = nil
 
--- === GUI ===
+-- GUI
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "BananaFixedFinal"
-screenGui.Parent = player:WaitForChild("PlayerGui")
+screenGui.Name = "BananaFarmFinal"
 screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
 
 -- Main Frame
 local mainFrame = Instance.new("Frame")
@@ -67,273 +66,275 @@ statusLabel.Font = Enum.Font.SourceSansBold
 statusLabel.TextSize = 14
 statusLabel.Parent = mainFrame
 
--- Hide/Show UI Button
+-- Hide UI
 local hideBtn = Instance.new("TextButton")
 hideBtn.Size = UDim2.new(0, 100, 0, 28)
 hideBtn.Position = UDim2.new(1, -110, 0, 15)
-hideBtn.AnchorPoint = Vector2.new(0, 0)
 hideBtn.BackgroundColor3 = Color3.fromRGB(255, 220, 0)
-hideBtn.BorderSizePixel = 0
 hideBtn.Text = "Hide UI"
 hideBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
 hideBtn.Font = Enum.Font.GothamBold
 hideBtn.TextSize = 13
 hideBtn.Parent = screenGui
-hideBtn.AutoButtonColor = true
 Instance.new("UICorner", hideBtn).CornerRadius = UDim.new(0, 8)
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(255, 200, 0)
-stroke.Thickness = 2
-stroke.Parent = hideBtn
 
 local uiVisible = true
 hideBtn.MouseButton1Click:Connect(function()
-	uiVisible = not uiVisible
-	if uiVisible then
-		mainFrame.Visible = true
-		hideBtn.Text = "Hide UI"
-	else
-		mainFrame.Visible = false
-		hideBtn.Text = "Show UI"
-	end
+    uiVisible = not uiVisible
+    mainFrame.Visible = uiVisible
+    hideBtn.Text = uiVisible and "Hide UI" or "Show UI"
 end)
 
--- Anti-AFK
+-- Anti AFK
 player.Idled:Connect(function()
-	if isScriptActive then
-		VirtualUser:CaptureController()
-		VirtualUser:ClickButton2(Vector2.new())
-	end
+    if isScriptActive then
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end
 end)
 
--- Clean up physics and platform
-local function CleanUpPhysics()
-	if magnetConnection then
-		magnetConnection:Disconnect()
-		magnetConnection = nil
-	end
-	if myPlatform then
-		myPlatform:Destroy()
-		myPlatform = nil
-	end
-	if bonusConnection then
-		bonusConnection:Disconnect()
-		bonusConnection = nil
-	end
-	if player.Character then
-		local hum = player.Character:FindFirstChild("Humanoid")
-		if hum then hum.PlatformStand = false end
-	end
+-- Update status label
+local function UpdateStatus()
+    if not isScriptActive then
+        statusLabel.Text = "Status: Off"
+        statusLabel.TextColor3 = Color3.fromRGB(255,255,255)
+        return
+    end
+
+    if currentMode == "Lobby" then
+        statusLabel.Text = "Status: Lobby (Waiting…)"
+        statusLabel.TextColor3 = Color3.fromRGB(200,200,200)
+        return
+    end
+
+    if currentMode == "Banana" then
+        statusLabel.Text = "Status: Banana (Resetting…)"
+        statusLabel.TextColor3 = Color3.fromRGB(255,120,0)
+        return
+    end
+
+    if currentMode == "Runner" then
+        if hasEscaped then
+            statusLabel.Text = "Status: Escaped"
+            statusLabel.TextColor3 = Color3.fromRGB(0,255,255)
+        elseif roundStarted and gameClock and gameClock.Value <= 60 then
+            statusLabel.Text = "Status: Escaping…"
+            statusLabel.TextColor3 = Color3.fromRGB(255,255,0)
+        else
+            statusLabel.Text = "Status: Runner (Farming)"
+            statusLabel.TextColor3 = Color3.fromRGB(0,255,0)
+        end
+    end
 end
 
--- Map references
-local function UpdateMapReferences()
-	if not gameClock then
-		local gp = Workspace:FindFirstChild("GameProperties")
-		if gp then gameClock = gp:FindFirstChild("GameClock") end
-	end
-	if not exitsFolder then
-		local gk = Workspace:FindFirstChild("GameKeeper")
-		if gk then exitsFolder = gk:FindFirstChild("Exits") end
-	end
+-- Cleanup
+local function CleanUp()
+    if magnetConnection then
+        magnetConnection:Disconnect()
+        magnetConnection = nil
+    end
+    if myPlatform then
+        myPlatform:Destroy()
+        myPlatform = nil
+    end
+    hasEscaped = false
+    roundStarted = false
+    UpdateStatus()
 end
 
--- Teleport helper
-local function SpamTeleport(targetCFrame, duration)
-	local startTime = tick()
-	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	if root then
-		root.Anchored = true
-		while tick() - startTime < duration do
-			if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then break end
-			root.CFrame = targetCFrame
-			root.AssemblyLinearVelocity = Vector3.zero
-			RunService.Heartbeat:Wait()
-		end
-		if root then root.Anchored = false end
-	end
+-- Get closest exit
+local function getClosestExit()
+    local gk = Workspace:FindFirstChild("GameKeeper")
+    if not gk then return nil end
+    
+    local exits = gk:FindFirstChild("Exits")
+    if not exits then return nil end
+    
+    local char = player.Character
+    if not char then return nil end
+    
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    
+    local closest, dist = nil, math.huge
+    
+    for _, v in pairs(exits:GetChildren()) do
+        if v.Name == "EscapeDoor" then
+            local part = v:FindFirstChild("Root") or v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
+            if part then
+                local d = (root.Position - part.Position).Magnitude
+                if d < dist then
+                    dist = d
+                    closest = part
+                end
+            end
+        end
+    end
+    
+    return closest
 end
 
--- Bonus
-local function CollectBonus()
-	if currentMode ~= "Lobby" or not isScriptActive then return end
-	local barrel = Workspace:FindFirstChild("BonusBarrel")
-	if barrel and barrel:FindFirstChild("Root") then
-		statusLabel.Text = "🎁 BONUS!"
-		statusLabel.TextColor3 = Color3.fromRGB(255, 0, 255)
-		SpamTeleport(barrel.Root.CFrame + Vector3.new(0,2,0),3)
-		statusLabel.Text = "Status: Lobby"
-		statusLabel.TextColor3 = Color3.fromRGB(200,200,200)
-	end
-end
-
-local function SetupBonusListener()
-	local holder = player:WaitForChild("BonusBarrelHolder",5)
-	if holder then
-		local timeVal = holder:WaitForChild("Time",5)
-		if timeVal then
-			if timeVal.Value == 0 then CollectBonus() end
-			if bonusConnection then bonusConnection:Disconnect() end
-			bonusConnection = timeVal:GetPropertyChangedSignal("Value"):Connect(function()
-				if timeVal.Value == 0 and currentMode == "Lobby" then CollectBonus() end
-			end)
-		end
-	end
-end
-
--- Runner platform + magnet
+-- Setup runner
 local function SetupRunner()
-	CleanUpPhysics()
-	hasEscaped = false
-	
-	statusLabel.Text = "Status: Waiting Map..."
-	statusLabel.TextColor3 = Color3.fromRGB(255,255,0)
+    CleanUp()
+    hasEscaped = false
 
-	-- ASPETTA CHE IL SERVER TI TELETRASPORTI NELLO SPAWN
-	task.wait(3)
+    task.wait(3)
 
-	local root
-	repeat
-		root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		task.wait(0.1)
-	until root
+    local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
 
-	-- Piattaforma volante
-	myPlatform = Instance.new("Part")
-	myPlatform.Size = Vector3.new(50,1,50)
-	myPlatform.Anchored = true
-	myPlatform.CanCollide = true
-	myPlatform.Transparency = 0.6
-	myPlatform.Color = Color3.fromRGB(255,255,0)
-	myPlatform.Material = Enum.Material.Neon
-	myPlatform.CFrame = CFrame.new(root.Position + Vector3.new(0,60,0))
-	myPlatform.Parent = Workspace
+    -- Create platform above map
+    myPlatform = Instance.new("Part")
+    myPlatform.Size = Vector3.new(50,1,50)
+    myPlatform.Anchored = true
+    myPlatform.CanCollide = true
+    myPlatform.Transparency = 0.6
+    myPlatform.Material = Enum.Material.Neon
+    myPlatform.Color = Color3.fromRGB(255,255,0)
+    myPlatform.CFrame = CFrame.new(root.Position + Vector3.new(0,60,0))
+    myPlatform.Parent = Workspace
 
-	-- TELEPORT FORZATO SOPRA LA PIATTAFORMA PER 1 SECONDO
-	local start = tick()
-	while tick() - start < 1 do
-		root.CFrame = myPlatform.CFrame + Vector3.new(0,3,0)
-		root.AssemblyLinearVelocity = Vector3.zero
-		RunService.Heartbeat:Wait()
-	end
+    -- Move player above platform
+    local start = tick()
+    while tick() - start < 1 do
+        root.CFrame = myPlatform.CFrame + Vector3.new(0,3,0)
+        root.AssemblyLinearVelocity = Vector3.zero
+        RunService.Heartbeat:Wait()
+    end
 
-	local hum = player.Character:FindFirstChild("Humanoid")
-	if hum then hum.PlatformStand = true end
+    local hum = player.Character:FindFirstChild("Humanoid")
+    if hum then hum.PlatformStand = true end
 
-	-- Magnet dei token
-	magnetConnection = RunService.Heartbeat:Connect(function()
-		if not isScriptActive or currentMode ~= "Runner" then return end
-		local charRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		if not charRoot then return end
+    -- Start 7s round delay
+    task.delay(7, function()
+        if currentMode == "Runner" and isScriptActive then
+            roundStarted = true
+            UpdateStatus()
+        end
+    end)
 
-		for _, obj in pairs(Workspace:GetDescendants()) do
-			if obj.Name == MONEY_NAME then
-				local targetPos = myPlatform.Position + Vector3.new(0,3,0)
-				if obj:IsA("BasePart") then
-					obj.CanCollide = false
-					obj.CFrame = CFrame.new(targetPos)
-					obj.AssemblyLinearVelocity = Vector3.zero
-				elseif obj:IsA("Model") and obj.PrimaryPart then
-					obj.PrimaryPart.CanCollide = false
-					obj:PivotTo(CFrame.new(targetPos))
-					obj.PrimaryPart.AssemblyLinearVelocity = Vector3.zero
-				elseif obj:IsA("Tool") and obj:FindFirstChild("Handle") then
-					obj.Handle.CanCollide = false
-					obj.Handle.CFrame = CFrame.new(targetPos)
-				end
-			end
-		end
-	end)
+    -- Magnet loop (every 0.5s)
+    magnetConnection = RunService.Heartbeat:Connect(function()
+        if not isScriptActive or currentMode ~= "Runner" then return end
+        if tick() % 0.5 > 0.03 then return end
+        
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj.Name == MONEY_NAME then
+                local targetPos = myPlatform.Position + Vector3.new(0,3,0)
+                if obj:IsA("BasePart") then
+                    obj.CanCollide = false
+                    obj.CFrame = CFrame.new(targetPos)
+                end
+            end
+        end
+    end)
 
-	statusLabel.Text = "Status: Farming"
-	statusLabel.TextColor3 = Color3.fromRGB(0,255,0)
+    UpdateStatus()
 end
 
--- Team changed
-local function OnTeamChanged()
-	if not isScriptActive then return end
-	local teamName = player.Team and player.Team.Name or "None"
+-- Escape loop
+RunService.Heartbeat:Connect(function()
+    if not isScriptActive then return end
+    if currentMode ~= "Runner" then return end
+    if not roundStarted then return end
+    if hasEscaped then return end
+    
+    if not gameClock then
+        local gp = Workspace:FindFirstChild("GameProperties")
+        if gp then gameClock = gp:FindFirstChild("GameClock") end
+    end
+    
+    if not gameClock then return end
+    
+    if gameClock.Value <= 60 then
+        UpdateStatus()
+        local char = player.Character
+        if not char then return end
+        
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        
+        local target = getClosestExit()
+        if not target then return end
+        
+        for _, v in pairs(char:GetDescendants()) do
+            if v:IsA("BasePart") then
+                v.CanCollide = false
+            end
+        end
+        
+        local start = tick()
+        while tick() - start < 4 do
+            root.CFrame = target.CFrame * CFrame.new(0,5,0)
+            root.AssemblyLinearVelocity = Vector3.zero
+            RunService.Heartbeat:Wait()
+        end
+        
+        hasEscaped = true
+        UpdateStatus()
 
-	if teamName == "Lobby" or teamName == "Spectators" or teamName == "None" then
-		currentMode = "Lobby"
-		CleanUpPhysics()
-		statusLabel.Text = "Status: Lobby"
-		statusLabel.TextColor3 = Color3.fromRGB(200,200,200)
-		SetupBonusListener()
-	elseif teamName == RUNNER_TEAM then
-		currentMode = "Runner"
-		SetupRunner()
-	elseif teamName == BANANA_TEAM then
-		currentMode = "Banana"
-		CleanUpPhysics()
-		statusLabel.Text = "Status: Banana (Resetting...)"
-		statusLabel.TextColor3 = Color3.fromRGB(255,0,0)
-		task.wait(0.5)
-		player:LoadCharacter()
-	end
+		-- Retry if Escape failed
+local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+local target = getClosestExit()
+if root and target and (root.Position - target.Position).Magnitude > 10 then
+    print("Escape failed, retrying in 10 seconds...")
+    task.delay(10, function()
+        if currentMode == "Runner" and isScriptActive then
+            SetupRunner() -- restart platoform and magnet loop
+        end
+    end)
+			end
+    end
+end)
+
+-- Team change handler
+local function OnTeamChanged()
+    if not isScriptActive then return end
+    
+    local teamName = player.Team and player.Team.Name or "None"
+    
+    if teamName == RUNNER_TEAM then
+        currentMode = "Runner"
+        SetupRunner()
+        
+    elseif teamName == BANANA_TEAM then
+        currentMode = "Banana"
+        CleanUp()
+        
+        task.wait(0.5)
+        local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.Health = 0 end
+        
+    else
+        currentMode = "Lobby"
+        CleanUp()
+    end
+    
+    UpdateStatus()
 end
 
 player:GetPropertyChangedSignal("Team"):Connect(OnTeamChanged)
 
--- Escape runner
-RunService.Stepped:Connect(function()
-	if not isScriptActive then return end
-	UpdateMapReferences()
-
-	if currentMode == "Runner" and gameClock and gameClock.Value <= 60 and gameClock.Value > 50 and not hasEscaped then
-		hasEscaped = true
-		CleanUpPhysics() -- rimuove piattaforma prima escape
-
-		if exitsFolder then
-			local exits = exitsFolder:GetChildren()
-			local primaryExit = exits[2]
-			local targetPart = primaryExit and (primaryExit:FindFirstChild("Neon") or primaryExit.PrimaryPart)
-			if targetPart and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-				statusLabel.Text = "🏃 ESCAPE: EXIT 2"
-				statusLabel.TextColor3 = Color3.fromRGB(0,255,255)
-				task.spawn(function()
-					SpamTeleport(targetPart.CFrame + Vector3.new(0,3,0),3)
-				end)
-			end
-
-			task.delay(13, function()
-				if isScriptActive and player.Team and player.Team.Name == RUNNER_TEAM then
-					statusLabel.Text = "⚠ PLAN B: ESCAPE DOOR"
-					statusLabel.TextColor3 = Color3.fromRGB(255,0,0)
-					local backupExit = exitsFolder:FindFirstChild("EscapeDoor")
-					if backupExit then
-						local backupPart = backupExit:FindFirstChild("Neon") or backupExit.PrimaryPart or backupExit:FindFirstChildWhichIsA("BasePart")
-						if backupPart and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-							SpamTeleport(backupPart.CFrame + Vector3.new(0,3,0),5)
-						end
-					end
-				end
-			end)
-		end
-	end
-end)
-
--- Toggle
+-- Toggle main farm
 toggleBtn.MouseButton1Click:Connect(function()
-	isScriptActive = not isScriptActive
-	if isScriptActive then
-		toggleBtn.Text = "Stop"
-		toggleBtn.BackgroundColor3 = Color3.fromRGB(200,0,0)
-		statusLabel.Text = "Status: Active"
-		OnTeamChanged()
-	else
-		toggleBtn.Text = "Start"
-		toggleBtn.BackgroundColor3 = Color3.fromRGB(255,220,0)
-		statusLabel.Text = "Status: Turned Off"
-		currentMode = "None"
-		CleanUpPhysics()
-	end
+    isScriptActive = not isScriptActive
+    
+    if isScriptActive then
+        toggleBtn.Text = "Stop"
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(200,0,0)
+        OnTeamChanged()
+    else
+        toggleBtn.Text = "Start"
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(255,220,0)
+        currentMode = "None"
+        CleanUp()
+        UpdateStatus()
+    end
 end)
 
--- Respawn
 player.CharacterAdded:Connect(function()
-	if isScriptActive then
-		CleanUpPhysics()
-		task.delay(0.5, OnTeamChanged)
-	end
+    if isScriptActive then
+        task.delay(0.5, OnTeamChanged)
+    end
 end)
