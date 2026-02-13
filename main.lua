@@ -130,17 +130,29 @@ end
 
 -- Cleanup
 local function CleanUp()
-if magnetConnection then
-magnetConnection:Disconnect()
-magnetConnection = nil
-end
-if myPlatform then
-myPlatform:Destroy()
-myPlatform = nil
-end
-hasEscaped = false
-roundStarted = false
-UpdateStatus()
+    if magnetConnection then
+        magnetConnection:Disconnect()
+        magnetConnection = nil
+    end
+
+    if myPlatform then
+        myPlatform:Destroy()
+        myPlatform = nil
+    end
+
+    -- Restore humanoid movement
+    local char = player.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.PlatformStand = false
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end
+
+    hasEscaped = false
+    roundStarted = false
+    UpdateStatus()
 end
 
 -- Get closest exit
